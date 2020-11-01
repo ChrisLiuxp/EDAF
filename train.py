@@ -14,7 +14,9 @@ from torch.utils.data import DataLoader
 from utils.dataloader import efficientdet_dataset_collate, EfficientdetDataset
 from nets.efficientdet import EfficientDetBackbone
 from nets.efficientdet_training import Generator, FocalLoss
+from nets.fcos_training import FCOSLoss
 from tqdm import tqdm
+from utils.vocdataset import VOCDataPrefetcher
 
 def get_lr(optimizer):
     for param_group in optimizer.param_groups:
@@ -30,72 +32,127 @@ def get_classes(classes_path):
     class_names = [c.strip() for c in class_names]
     return class_names
 
-def fit_one_epoch(net,focal_loss,epoch,epoch_size,epoch_size_val,gen,genval,Epoch,cuda):
-    total_r_loss = 0
-    total_c_loss = 0
-    total_loss = 0
-    val_loss = 0
+def fit_one_epoch(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genval,Epoch,cuda):
+    cls_losses, reg_losses, center_ness_losses, losses, val_loss = [], [], [], [], []
+
     start_time = time.time()
     with tqdm(total=epoch_size,desc=f'Epoch {epoch + 1}/{Epoch}',postfix=dict,mininterval=0.3) as pbar:
-        for iteration, batch in enumerate(gen):
-            if iteration >= epoch_size:
-                break
-            images, targets = batch[0], batch[1]
-            with torch.no_grad():
-                if cuda:
-                    images = Variable(torch.from_numpy(images).type(torch.FloatTensor)).cuda()
-                    targets = [Variable(torch.from_numpy(ann).type(torch.FloatTensor)).cuda() for ann in targets]
-                else:
-                    images = Variable(torch.from_numpy(images).type(torch.FloatTensor))
-                    targets = [Variable(torch.from_numpy(ann).type(torch.FloatTensor)) for ann in targets]
+        # for iteration, batch in enumerate(gen):
+        #     if iteration >= epoch_size:
+        #         break
+        #     images, targets = batch[0], batch[1]
+        #     with torch.no_grad():
+        #         if cuda:
+        #             images = Variable(torch.from_numpy(images).type(torch.FloatTensor)).cuda()
+        #             targets = [Variable(torch.from_numpy(ann).type(torch.FloatTensor)).cuda() for ann in targets]
+        #         else:
+        #             images = Variable(torch.from_numpy(images).type(torch.FloatTensor))
+        #             targets = [Variable(torch.from_numpy(ann).type(torch.FloatTensor)) for ann in targets]
+        #
+        #     optimizer.zero_grad()
+        #     cls_heads, reg_heads, center_heads, batch_positions = net(images)
+        #     cls_loss, reg_loss, center_ness_loss = fcos_loss(cls_heads, reg_heads, center_heads, batch_positions, targets)
+        #     loss = cls_loss + reg_loss + center_ness_loss
+        #     loss.backward()
+        #     optimizer.step()
+        #
+        #     total_loss += loss.item()
+        #     total_r_loss += reg_loss.item()
+        #     total_c_loss += cls_loss.item()
+        #     total_ctn_loss += center_ness_loss.item()
+        #     waste_time = time.time() - start_time
+        #
+        #     pbar.set_postfix(**{'Conf Loss'         : total_c_loss / (iteration+1),
+        #                         'Regression Loss'   : total_r_loss / (iteration+1),
+        #                         'Center-ness Loss': total_ctn_loss / (iteration + 1),
+        #                         'lr'                : get_lr(optimizer),
+        #                         'step/s'            : waste_time})
+        #     pbar.update(1)
+        #
+        #     start_time = time.time()
+        prefetcher = VOCDataPrefetcher(gen)
+        images, annotations = prefetcher.next()
+        while images is not None:
+            images, annotations = images.cuda().float(), annotations.cuda()
+            cls_heads, reg_heads, center_heads, batch_positions = net(images)
+            cls_loss, reg_loss, center_ness_loss = fcos_loss(
+                cls_heads, reg_heads, center_heads, batch_positions, annotations)
+            loss = cls_loss + reg_loss + center_ness_loss
+            if cls_loss == 0.0 or reg_loss == 0.0:
+                optimizer.zero_grad()
+                continue
 
-            optimizer.zero_grad()
-            _, regression, classification, anchors = net(images)
-            loss, c_loss, r_loss = focal_loss(classification, regression, anchors, targets, cuda=cuda)
             loss.backward()
+
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 0.1)
             optimizer.step()
-            
-            total_loss += loss.item()
-            total_r_loss += r_loss.item()
-            total_c_loss += c_loss.item()
+            optimizer.zero_grad()
+
+            cls_losses.append(cls_loss.item())
+            reg_losses.append(reg_loss.item())
+            center_ness_losses.append(center_ness_loss.item())
+            losses.append(loss.item())
             waste_time = time.time() - start_time
-            
-            pbar.set_postfix(**{'Conf Loss'         : total_c_loss / (iteration+1), 
-                                'Regression Loss'   : total_r_loss / (iteration+1), 
+
+            pbar.set_postfix(**{'Conf Loss'         : cls_loss.item(),
+                                'Regression Loss'   : reg_loss.item(),
+                                'Center-ness Loss'  : center_ness_loss.item(),
                                 'lr'                : get_lr(optimizer),
                                 'step/s'            : waste_time})
             pbar.update(1)
 
             start_time = time.time()
 
+            images, annotations = prefetcher.next()
+
 
     print('Start Validation')
     with tqdm(total=epoch_size_val, desc=f'Epoch {epoch + 1}/{Epoch}',postfix=dict,mininterval=0.3) as pbar:
-        for iteration, batch in enumerate(genval):
-            if iteration >= epoch_size_val:
-                break
-            images_val, targets_val = batch[0], batch[1]
-
+        # for iteration, batch in enumerate(genval):
+        #     if iteration >= epoch_size_val:
+        #         break
+        #     images_val, targets_val = batch[0], batch[1]
+        #
+        #     with torch.no_grad():
+        #         if cuda:
+        #             images_val = Variable(torch.from_numpy(images_val).type(torch.FloatTensor)).cuda()
+        #             targets_val = [Variable(torch.from_numpy(ann).type(torch.FloatTensor)).cuda() for ann in targets_val]
+        #         else:
+        #             images_val = Variable(torch.from_numpy(images_val).type(torch.FloatTensor))
+        #             targets_val = [Variable(torch.from_numpy(ann).type(torch.FloatTensor)) for ann in targets_val]
+        #         optimizer.zero_grad()
+        #         cls_heads, reg_heads, center_heads, batch_positions = net(images_val)
+        #         cls_loss, reg_loss, center_ness_loss = fcos_loss(cls_heads, reg_heads, center_heads, batch_positions, targets_val)
+        #         loss = cls_loss + reg_loss + center_ness_loss
+        #         val_loss += loss.item()
+        #
+        #     pbar.set_postfix(**{'total_loss': val_loss / (iteration + 1)})
+        #     pbar.update(1)
+        prefetcher_val = VOCDataPrefetcher(genval)
+        images_val, annotations_val  = prefetcher_val.next()
+        while images_val is not None:
+            images_val, annotations_val = images_val.cuda().float(), annotations_val.cuda()
             with torch.no_grad():
-                if cuda:
-                    images_val = Variable(torch.from_numpy(images_val).type(torch.FloatTensor)).cuda()
-                    targets_val = [Variable(torch.from_numpy(ann).type(torch.FloatTensor)).cuda() for ann in targets_val]
-                else:
-                    images_val = Variable(torch.from_numpy(images_val).type(torch.FloatTensor))
-                    targets_val = [Variable(torch.from_numpy(ann).type(torch.FloatTensor)) for ann in targets_val]
-                optimizer.zero_grad()
-                _, regression, classification, anchors = net(images_val)
-                loss, c_loss, r_loss = focal_loss(classification, regression, anchors, targets_val, cuda=cuda)
-                val_loss += loss.item()
+                cls_heads, reg_heads, center_heads, batch_positions = net(images_val)
+                cls_loss, reg_loss, center_ness_loss = fcos_loss(
+                    cls_heads, reg_heads, center_heads, batch_positions, annotations_val)
+                loss = cls_loss + reg_loss + center_ness_loss
 
-            pbar.set_postfix(**{'total_loss': val_loss / (iteration + 1)})
+                optimizer.zero_grad()
+
+                val_loss.append(loss.item())
+
+            pbar.set_postfix(**{'Total Loss'         : loss.item()})
             pbar.update(1)
+
+            images_val, annotations_val  = prefetcher_val.next()
+
     print('Finish Validation')
     print('\nEpoch:'+ str(epoch+1) + '/' + str(Epoch))
-    print('Total Loss: %.4f || Val Loss: %.4f ' % (total_loss/(epoch_size+1),val_loss/(epoch_size_val+1)))
+    print('Total Loss: %.4f || Val Loss: %.4f ' % (losses/(epoch_size+1),val_loss/(epoch_size_val+1)))
 
     print('Saving state, iter:', str(epoch+1))
-    torch.save(model.state_dict(), 'logs/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth'%((epoch+1),total_loss/(epoch_size+1),val_loss/(epoch_size_val+1)))
+    torch.save(model.state_dict(), 'logs/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth'%((epoch+1),losses/(epoch_size+1),val_loss/(epoch_size_val+1)))
     return val_loss/(epoch_size_val+1)
 #----------------------------------------------------#
 #   检测精度mAP和pr曲线计算参考视频
@@ -107,7 +164,7 @@ if __name__ == "__main__":
     #   二者所使用Efficientdet版本要相同
     #-------------------------------------------#
     phi = 0
-    Cuda = True
+    Cuda = False
     annotation_path = '2007_train.txt'
     classes_path = 'model_data/voc_classes.txt'   
     #-------------------------------#
@@ -127,15 +184,15 @@ if __name__ == "__main__":
     #------------------------------------------------------#
     #   权值文件请看README，百度网盘下载
     #------------------------------------------------------#
-    model_path = "model_data/efficientdet-d0.pth"
-    # 加快模型训练的效率
-    print('Loading weights into state dict...')
-    model_dict = model.state_dict() 
-    pretrained_dict = torch.load(model_path)
-    pretrained_dict = {k: v for k, v in pretrained_dict.items() if np.shape(model_dict[k]) ==  np.shape(v)}
-    model_dict.update(pretrained_dict)
-    model.load_state_dict(model_dict)
-    print('Finished!')
+    # model_path = "model_data/efficientdet-d0.pth"
+    # # 加快模型训练的效率
+    # print('Loading weights into state dict...')
+    # model_dict = model.state_dict()
+    # pretrained_dict = torch.load(model_path)
+    # pretrained_dict = {k: v for k, v in pretrained_dict.items() if np.shape(model_dict[k]) ==  np.shape(v)}
+    # model_dict.update(pretrained_dict)
+    # model.load_state_dict(model_dict)
+    # print('Finished!')
 
     net = model.train()
 
@@ -144,7 +201,8 @@ if __name__ == "__main__":
         cudnn.benchmark = True
         net = net.cuda()
 
-    efficient_loss = FocalLoss()
+    # efficient_loss = FocalLoss()
+    fcos_loss = FCOSLoss()
 
     # 0.1用于验证，0.9用于训练
     val_split = 0.1
@@ -169,7 +227,7 @@ if __name__ == "__main__":
         #   BATCH_SIZE不要太小，不然训练效果很差
         #--------------------------------------------#
         lr = 1e-3
-        Batch_size = 4
+        Batch_size = 1
         Init_Epoch = 0
         Freeze_Epoch = 50
         
@@ -198,7 +256,7 @@ if __name__ == "__main__":
             param.requires_grad = False
 
         for epoch in range(Init_Epoch,Freeze_Epoch):
-            val_loss = fit_one_epoch(net,efficient_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Freeze_Epoch,Cuda)
+            val_loss = fit_one_epoch(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Freeze_Epoch,Cuda)
             lr_scheduler.step(val_loss)
 
     if True:
@@ -206,7 +264,7 @@ if __name__ == "__main__":
         #   BATCH_SIZE不要太小，不然训练效果很差
         #--------------------------------------------#
         lr = 1e-4
-        Batch_size = 4
+        Batch_size = 1
         Freeze_Epoch = 50
         Unfreeze_Epoch = 100
 
@@ -236,5 +294,5 @@ if __name__ == "__main__":
             param.requires_grad = True
 
         for epoch in range(Freeze_Epoch,Unfreeze_Epoch):
-            val_loss = fit_one_epoch(net,efficient_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Unfreeze_Epoch,Cuda)
+            val_loss = fit_one_epoch(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Unfreeze_Epoch,Cuda)
             lr_scheduler.step(val_loss)

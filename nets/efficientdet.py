@@ -4,6 +4,7 @@ import torch
 from nets.efficientnet import EfficientNet as EffNet
 from nets.layers import MemoryEfficientSwish, Swish
 from nets.layers import Conv2dStaticSamePadding, MaxPool2dStaticSamePadding
+from nets.head import FCOSClsHead, FCOSRegCenterHead, FCOSPositions
 from utils.anchors import Anchors
 
 #----------------------------------#
@@ -438,14 +439,14 @@ class EfficientDetBackbone(nn.Module):
         # backbone_phi指的是该efficientdet对应的efficient
         self.backbone_phi = [0, 1, 2, 3, 4, 5, 6, 6]
         # BiFPN所用的通道数
-        self.fpn_num_filters = [64, 88, 112, 160, 224, 288, 384, 384]
+        self.fpn_num_filters = [256, 88, 112, 160, 224, 288, 384, 384]
         # BiFPN的重复次数
         self.fpn_cell_repeats = [3, 4, 5, 6, 7, 7, 8, 8]
         # 分类头的卷积重复次数
         self.box_class_repeats = [3, 3, 3, 4, 4, 4, 5, 5]
         # 基础的先验框大小
-        self.anchor_scale = [4., 4., 4., 4., 4., 4., 4., 5.]
-        num_anchors = 9
+        # self.anchor_scale = [4., 4., 4., 4., 4., 4., 4., 5.]
+        # num_anchors = 9
         conv_channel_coef = {
             0: [40, 112, 320],
             1: [40, 112, 320],
@@ -466,30 +467,87 @@ class EfficientDetBackbone(nn.Module):
               for _ in range(self.fpn_cell_repeats[phi])])
 
         self.num_classes = num_classes
-        self.regressor = BoxNet(in_channels=self.fpn_num_filters[self.phi], num_anchors=num_anchors,
-                                   num_layers=self.box_class_repeats[self.phi])
-
-        self.classifier = ClassNet(in_channels=self.fpn_num_filters[self.phi], num_anchors=num_anchors,
-                                     num_classes=num_classes,
-                                     num_layers=self.box_class_repeats[self.phi])
-        self.anchors = Anchors(anchor_scale=self.anchor_scale[phi])
+        # self.regressor = BoxNet(in_channels=self.fpn_num_filters[self.phi], num_anchors=num_anchors,
+        #                            num_layers=self.box_class_repeats[self.phi])
+        #
+        # self.classifier = ClassNet(in_channels=self.fpn_num_filters[self.phi], num_anchors=num_anchors,
+        #                              num_classes=num_classes,
+        #                              num_layers=self.box_class_repeats[self.phi])
+        # self.anchors = Anchors(anchor_scale=self.anchor_scale[phi])
 
         self.backbone_net = EfficientNet(self.backbone_phi[phi], load_weights)
+
+        self.cls_head = FCOSClsHead(256,
+                                    self.num_classes,
+                                    num_layers=4,
+                                    prior=0.01)
+        self.regcenter_head = FCOSRegCenterHead(256, num_layers=4)
+
+        self.strides = torch.tensor([8, 16, 32, 64, 128], dtype=torch.float)
+        self.positions = FCOSPositions(self.strides)
+
+        self.scales = nn.Parameter(torch.FloatTensor([1., 1., 1., 1., 1.]))
 
     def freeze_bn(self):
         for m in self.modules():
             if isinstance(m, nn.BatchNorm2d):
                 m.eval()
 
+    # def forward(self, inputs):
+    #     _, p3, p4, p5 = self.backbone_net(inputs)
+    #
+    #     features = (p3, p4, p5)
+    #     features = self.bifpn(features)
+    #
+    #     regression = self.regressor(features)
+    #     classification = self.classifier(features)
+    #     anchors = self.anchors(inputs)
+    #
+    #     return features, regression, classification, anchors
     def forward(self, inputs):
+        self.batch_size, _, _, _ = inputs.shape
+        device = inputs.device
         _, p3, p4, p5 = self.backbone_net(inputs)
+
+        del inputs
 
         features = (p3, p4, p5)
         features = self.bifpn(features)
 
-        regression = self.regressor(features)
-        classification = self.classifier(features)
-        anchors = self.anchors(inputs)
-    
-        return features, regression, classification, anchors
+        del p3, p4, p5
+
+        self.fpn_feature_sizes = []
+        cls_heads, reg_heads, center_heads = [], [], []
+        for feature, scale in zip(features, self.scales):
+            self.fpn_feature_sizes.append([feature.shape[3], feature.shape[2]])
+            cls_outs = self.cls_head(feature)
+            # [N,num_classes,H,W] -> [N,H,W,num_classes]
+            cls_outs = cls_outs.permute(0, 2, 3, 1).contiguous()
+            cls_heads.append(cls_outs)
+
+            reg_outs, center_outs = self.regcenter_head(feature)
+            # [N,4,H,W] -> [N,H,W,4]
+            reg_outs = reg_outs.permute(0, 2, 3, 1).contiguous()
+            reg_outs = reg_outs * scale
+            reg_heads.append(reg_outs)
+            # [N,1,H,W] -> [N,H,W,1]
+            center_outs = center_outs.permute(0, 2, 3, 1).contiguous()
+            center_heads.append(center_outs)
+
+        del features
+
+        self.fpn_feature_sizes = torch.tensor(
+            self.fpn_feature_sizes).to(device)
+
+        batch_positions = self.positions(self.batch_size,
+                                         self.fpn_feature_sizes)
+
+        # if input size:[B,3,640,640]
+        # features shape:[[B, 256, 80, 80],[B, 256, 40, 40],[B, 256, 20, 20],[B, 256, 10, 10],[B, 256, 5, 5]]
+        # cls_heads shape:[[B, 80, 80, 80],[B, 40, 40, 80],[B, 20, 20, 80],[B, 10, 10, 80],[B, 5, 5, 80]]
+        # reg_heads shape:[[B, 80, 80, 4],[B, 40, 40, 4],[B, 20, 20, 4],[B, 10, 10, 4],[B, 5, 5, 4]]
+        # center_heads shape:[[B, 80, 80, 1],[B, 40, 40, 1],[B, 20, 20, 1],[B, 10, 10, 1],[B, 5, 5, 1]]
+        # batch_positions shape:[[B, 80, 80, 2],[B, 40, 40, 2],[B, 20, 20, 2],[B, 10, 10, 2],[B, 5, 5, 2]]
+
+        return cls_heads, reg_heads, center_heads, batch_positions
 
