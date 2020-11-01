@@ -37,39 +37,6 @@ def fit_one_epoch(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genval,Epoch
 
     start_time = time.time()
     with tqdm(total=epoch_size,desc=f'Epoch {epoch + 1}/{Epoch}',postfix=dict,mininterval=0.3) as pbar:
-        # for iteration, batch in enumerate(gen):
-        #     if iteration >= epoch_size:
-        #         break
-        #     images, targets = batch[0], batch[1]
-        #     with torch.no_grad():
-        #         if cuda:
-        #             images = Variable(torch.from_numpy(images).type(torch.FloatTensor)).cuda()
-        #             targets = [Variable(torch.from_numpy(ann).type(torch.FloatTensor)).cuda() for ann in targets]
-        #         else:
-        #             images = Variable(torch.from_numpy(images).type(torch.FloatTensor))
-        #             targets = [Variable(torch.from_numpy(ann).type(torch.FloatTensor)) for ann in targets]
-        #
-        #     optimizer.zero_grad()
-        #     cls_heads, reg_heads, center_heads, batch_positions = net(images)
-        #     cls_loss, reg_loss, center_ness_loss = fcos_loss(cls_heads, reg_heads, center_heads, batch_positions, targets)
-        #     loss = cls_loss + reg_loss + center_ness_loss
-        #     loss.backward()
-        #     optimizer.step()
-        #
-        #     total_loss += loss.item()
-        #     total_r_loss += reg_loss.item()
-        #     total_c_loss += cls_loss.item()
-        #     total_ctn_loss += center_ness_loss.item()
-        #     waste_time = time.time() - start_time
-        #
-        #     pbar.set_postfix(**{'Conf Loss'         : total_c_loss / (iteration+1),
-        #                         'Regression Loss'   : total_r_loss / (iteration+1),
-        #                         'Center-ness Loss': total_ctn_loss / (iteration + 1),
-        #                         'lr'                : get_lr(optimizer),
-        #                         'step/s'            : waste_time})
-        #     pbar.update(1)
-        #
-        #     start_time = time.time()
         prefetcher = VOCDataPrefetcher(gen)
         images, annotations = prefetcher.next()
         while images is not None:
@@ -108,26 +75,6 @@ def fit_one_epoch(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genval,Epoch
 
     print('Start Validation')
     with tqdm(total=epoch_size_val, desc=f'Epoch {epoch + 1}/{Epoch}',postfix=dict,mininterval=0.3) as pbar:
-        # for iteration, batch in enumerate(genval):
-        #     if iteration >= epoch_size_val:
-        #         break
-        #     images_val, targets_val = batch[0], batch[1]
-        #
-        #     with torch.no_grad():
-        #         if cuda:
-        #             images_val = Variable(torch.from_numpy(images_val).type(torch.FloatTensor)).cuda()
-        #             targets_val = [Variable(torch.from_numpy(ann).type(torch.FloatTensor)).cuda() for ann in targets_val]
-        #         else:
-        #             images_val = Variable(torch.from_numpy(images_val).type(torch.FloatTensor))
-        #             targets_val = [Variable(torch.from_numpy(ann).type(torch.FloatTensor)) for ann in targets_val]
-        #         optimizer.zero_grad()
-        #         cls_heads, reg_heads, center_heads, batch_positions = net(images_val)
-        #         cls_loss, reg_loss, center_ness_loss = fcos_loss(cls_heads, reg_heads, center_heads, batch_positions, targets_val)
-        #         loss = cls_loss + reg_loss + center_ness_loss
-        #         val_loss += loss.item()
-        #
-        #     pbar.set_postfix(**{'total_loss': val_loss / (iteration + 1)})
-        #     pbar.update(1)
         prefetcher_val = VOCDataPrefetcher(genval)
         images_val, annotations_val  = prefetcher_val.next()
         while images_val is not None:
