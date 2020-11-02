@@ -16,7 +16,6 @@ from nets.efficientdet import EfficientDetBackbone
 from nets.efficientdet_training import Generator, FocalLoss
 from nets.fcos_training import FCOSLoss
 from tqdm import tqdm
-from utils.vocdataset import VOCDataPrefetcher
 
 def get_lr(optimizer):
     for param_group in optimizer.param_groups:
@@ -54,7 +53,7 @@ def fit_one_epoch(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genval,Epoch
 
             optimizer.zero_grad()
             cls_heads, reg_heads, center_heads, batch_positions = net(images)
-            cls_loss, reg_loss, center_ness_loss = fcos_loss(cls_heads, reg_heads, center_heads, batch_positions, targets)
+            cls_loss, reg_loss, center_ness_loss = fcos_loss(cls_heads, reg_heads, center_heads, batch_positions, targets, cuda=cuda)
             loss = cls_loss + reg_loss + center_ness_loss
             loss.backward()
             optimizer.step()
@@ -91,7 +90,7 @@ def fit_one_epoch(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genval,Epoch
                     targets_val = [Variable(torch.from_numpy(ann).type(torch.FloatTensor)) for ann in targets_val]
                 optimizer.zero_grad()
                 cls_heads, reg_heads, center_heads, batch_positions = net(images_val)
-                cls_loss, reg_loss, center_ness_loss = fcos_loss(cls_heads, reg_heads, center_heads, batch_positions, targets_val)
+                cls_loss, reg_loss, center_ness_loss = fcos_loss(cls_heads, reg_heads, center_heads, batch_positions, targets_val, cuda=cuda)
                 loss = cls_loss + reg_loss + center_ness_loss
                 val_loss += loss.item()
 

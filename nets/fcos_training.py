@@ -20,20 +20,19 @@ class FCOSLoss(nn.Module):
         self.strides = strides
         self.mi = mi
 
-    def forward(self, cls_heads, reg_heads, center_heads, batch_positions,
-                annotations):
+    def forward(self, cls_heads, reg_heads, center_heads, batch_positions, annotations, cuda=True):
         """
         compute cls loss, reg loss and center-ness loss in one batch
         """
         cls_preds, reg_preds, center_preds, batch_targets = self.get_batch_position_annotations(
-            cls_heads, reg_heads, center_heads, batch_positions, annotations)
+            cls_heads, reg_heads, center_heads, batch_positions, annotations, cuda=cuda)
 
         cls_preds = torch.sigmoid(cls_preds)
         reg_preds = torch.exp(reg_preds)
         center_preds = torch.sigmoid(center_preds)
         batch_targets[:, :, 5:6] = torch.sigmoid(batch_targets[:, :, 5:6])
 
-        device = annotations.device
+        # device = annotations.device
         cls_loss, reg_loss, center_ness_loss = [], [], []
         valid_image_num = 0
         for per_image_cls_preds, per_image_reg_preds, per_image_center_preds, per_image_targets in zip(
@@ -41,17 +40,22 @@ class FCOSLoss(nn.Module):
             positive_points_num = (
                 per_image_targets[per_image_targets[:, 4] > 0]).shape[0]
             if positive_points_num == 0:
-                cls_loss.append(torch.tensor(0.).to(device))
-                reg_loss.append(torch.tensor(0.).to(device))
-                center_ness_loss.append(torch.tensor(0.).to(device))
+                if cuda:
+                    cls_loss.append(torch.tensor(0.).cuda())
+                    reg_loss.append(torch.tensor(0.).cuda())
+                    center_ness_loss.append(torch.tensor(0.).cuda())
+                else:
+                    cls_loss.append(torch.tensor(0.))
+                    reg_loss.append(torch.tensor(0.))
+                    center_ness_loss.append(torch.tensor(0.))
             else:
                 valid_image_num += 1
                 one_image_cls_loss = self.compute_one_image_focal_loss(
                     per_image_cls_preds, per_image_targets)
                 one_image_reg_loss = self.compute_one_image_giou_loss(
-                    per_image_reg_preds, per_image_targets)
+                    per_image_reg_preds, per_image_targets, cuda)
                 one_image_center_ness_loss = self.compute_one_image_center_ness_loss(
-                    per_image_center_preds, per_image_targets)
+                    per_image_center_preds, per_image_targets, cuda)
 
                 cls_loss.append(one_image_cls_loss)
                 reg_loss.append(one_image_reg_loss)
@@ -103,20 +107,23 @@ class FCOSLoss(nn.Module):
         return one_image_focal_loss
 
     def compute_one_image_giou_loss(self, per_image_reg_preds,
-                                    per_image_targets):
+                                    per_image_targets, cuda):
         """
         compute one image giou loss(reg loss)
         per_image_reg_preds:[points_num,4]
         per_image_targets:[anchor_num,8]
         """
         # only use positive points sample to compute reg loss
-        device = per_image_reg_preds.device
+        # device = per_image_reg_preds.device
         per_image_reg_preds = per_image_reg_preds[per_image_targets[:, 4] > 0]
         per_image_targets = per_image_targets[per_image_targets[:, 4] > 0]
         positive_points_num = per_image_targets.shape[0]
 
         if positive_points_num == 0:
-            return torch.tensor(0.).to(device)
+            if cuda:
+                return torch.tensor(0.).cuda()
+            else:
+                return torch.tensor(0.)
 
         center_ness_targets = per_image_targets[:, 5]
 
@@ -178,21 +185,24 @@ class FCOSLoss(nn.Module):
         return gious_loss
 
     def compute_one_image_center_ness_loss(self, per_image_center_preds,
-                                           per_image_targets):
+                                           per_image_targets, cuda):
         """
         compute one image center_ness loss(center ness loss)
         per_image_center_preds:[points_num,4]
         per_image_targets:[anchor_num,8]
         """
         # only use positive points sample to compute center_ness loss
-        device = per_image_center_preds.device
+        # device = per_image_center_preds.device
         per_image_center_preds = per_image_center_preds[
             per_image_targets[:, 4] > 0]
         per_image_targets = per_image_targets[per_image_targets[:, 4] > 0]
         positive_points_num = per_image_targets.shape[0]
 
         if positive_points_num == 0:
-            return torch.tensor(0.).to(device)
+            if cuda:
+                return torch.tensor(0.).cuda()
+            else:
+                return torch.tensor(0.)
 
         center_ness_targets = per_image_targets[:, 5:6]
 
@@ -206,16 +216,21 @@ class FCOSLoss(nn.Module):
 
     def get_batch_position_annotations(self, cls_heads, reg_heads,
                                        center_heads, batch_positions,
-                                       annotations):
+                                       annotations, cuda):
         """
         Assign a ground truth target for each position on feature map
         """
-        device = annotations.device
+        # device = annotations.device
         batch_mi = []
         for reg_head, mi in zip(reg_heads, self.mi):
-            mi = torch.tensor(mi).to(device)
-            B, H, W, _ = reg_head.shape
-            per_level_mi = torch.zeros(B, H, W, 2).to(device)
+            if cuda:
+                mi = torch.tensor(mi).cuda()
+                B, H, W, _ = reg_head.shape
+                per_level_mi = torch.zeros(B, H, W, 2).cuda()
+            else:
+                mi = torch.tensor(mi)
+                B, H, W, _ = reg_head.shape
+                per_level_mi = torch.zeros(B, H, W, 2)
             per_level_mi = per_level_mi + mi
             batch_mi.append(per_level_mi)
 
@@ -251,13 +266,19 @@ class FCOSLoss(nn.Module):
             points_num = per_image_position.shape[0]
 
             if per_image_annotations.shape[0] == 0:
-                # 6:l,t,r,b,class_index,center-ness_gt
-                per_image_targets = torch.zeros([points_num, 6], device=device)
+                if cuda:
+                    # 6:l,t,r,b,class_index,center-ness_gt
+                    per_image_targets = torch.zeros([points_num, 6]).cuda()
+                else:
+                    # 6:l,t,r,b,class_index,center-ness_gt
+                    per_image_targets = torch.zeros([points_num, 6])
             else:
                 annotaion_num = per_image_annotations.shape[0]
                 per_image_gt_bboxes = per_image_annotations[:, 0:4]
-                candidates = torch.zeros([points_num, annotaion_num, 4],
-                                         device=device)
+                if cuda:
+                    candidates = torch.zeros([points_num, annotaion_num, 4]).cuda()
+                else:
+                    candidates = torch.zeros([points_num, annotaion_num, 4])
                 candidates = candidates + per_image_gt_bboxes.unsqueeze(0)
                 per_image_position = per_image_position.unsqueeze(1).repeat(
                     1, annotaion_num, 2)
@@ -295,9 +316,12 @@ class FCOSLoss(nn.Module):
                 # if no assign positive sample
                 if len(positive_index) == 0:
                     del candidates
-                    # 6:l,t,r,b,class_index,center-ness_gt
-                    per_image_targets = torch.zeros([points_num, 6],
-                                                    device=device)
+                    if cuda:
+                        # 6:l,t,r,b,class_index,center-ness_gt
+                        per_image_targets = torch.zeros([points_num, 6]).cuda()
+                    else:
+                        # 6:l,t,r,b,class_index,center-ness_gt
+                        per_image_targets = torch.zeros([points_num, 6])
                 else:
                     positive_candidates = candidates[positive_index]
 
@@ -311,9 +335,12 @@ class FCOSLoss(nn.Module):
                     sample_class_gts = sample_class_gts.repeat(
                         positive_candidates.shape[0], 1, 1)
 
-                    # 6:l,t,r,b,class_index,center-ness_gt
-                    per_image_targets = torch.zeros([points_num, 6],
-                                                    device=device)
+                    if cuda:
+                        # 6:l,t,r,b,class_index,center-ness_gt
+                        per_image_targets = torch.zeros([points_num, 6]).cuda()
+                    else:
+                        # 6:l,t,r,b,class_index,center-ness_gt
+                        per_image_targets = torch.zeros([points_num, 6])
 
                     if positive_candidates.shape[1] == 1:
                         # if only one candidate for each positive sample
