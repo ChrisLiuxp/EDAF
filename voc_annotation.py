@@ -12,7 +12,7 @@ def convert_annotation(year, image_id, list_file):
     root = tree.getroot()
     if root.find('object')==None:
         return
-    list_file.write('%s/VOCdevkit/VOC%s/JPEGImages/%s.jpg'%(wd, year, image_id))
+    list_file.write('%s/VOCdevkit/VOC%s/JPEGImages/%s.jpg'%('.', year, image_id))
     for obj in root.iter('object'):
         difficult = obj.find('difficult').text
         cls = obj.find('name').text
