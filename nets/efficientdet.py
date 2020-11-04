@@ -4,7 +4,7 @@ import torch
 from nets.efficientnet import EfficientNet as EffNet
 from nets.layers import MemoryEfficientSwish, Swish
 from nets.layers import Conv2dStaticSamePadding, MaxPool2dStaticSamePadding
-from nets.head import FCOSClsHead, FCOSRegCenterHead, FCOSPositions
+from nets.head import FCOSClsCenterHead, FCOSRegHead, FCOSPositions
 from utils.anchors import Anchors
 
 #----------------------------------#
@@ -477,11 +477,11 @@ class EfficientDetBackbone(nn.Module):
 
         self.backbone_net = EfficientNet(self.backbone_phi[phi], load_weights)
 
-        self.cls_head = FCOSClsHead(256,
+        self.cls_head = FCOSClsCenterHead(256,
                                     self.num_classes,
                                     num_layers=4,
                                     prior=0.01)
-        self.regcenter_head = FCOSRegCenterHead(256, num_layers=4)
+        self.regcenter_head = FCOSRegHead(256, num_layers=4)
 
         self.strides = torch.tensor([8, 16, 32, 64, 128], dtype=torch.float)
         self.positions = FCOSPositions(self.strides)
@@ -520,12 +520,12 @@ class EfficientDetBackbone(nn.Module):
         cls_heads, reg_heads, center_heads = [], [], []
         for feature, scale in zip(features, self.scales):
             self.fpn_feature_sizes.append([feature.shape[3], feature.shape[2]])
-            cls_outs = self.cls_head(feature)
+            cls_outs, center_outs = self.cls_head(feature)
             # [N,num_classes,H,W] -> [N,H,W,num_classes]
             cls_outs = cls_outs.permute(0, 2, 3, 1).contiguous()
             cls_heads.append(cls_outs)
 
-            reg_outs, center_outs = self.regcenter_head(feature)
+            reg_outs = self.regcenter_head(feature)
             # [N,4,H,W] -> [N,H,W,4]
             reg_outs = reg_outs.permute(0, 2, 3, 1).contiguous()
             reg_outs = reg_outs * scale
