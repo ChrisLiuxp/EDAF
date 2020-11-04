@@ -129,7 +129,7 @@ if __name__ == "__main__":
     input_shape = (input_sizes[phi], input_sizes[phi])
 
     # 创建模型
-    model = EfficientDetBackbone(num_classes,phi)
+    model = EfficientDetBackbone(num_classes, phi, load_weights=True)
 
     #------------------------------------------------------#
     #   权值文件请看README，百度网盘下载
