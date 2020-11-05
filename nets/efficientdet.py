@@ -439,7 +439,7 @@ class EfficientDetBackbone(nn.Module):
         # backbone_phi指的是该efficientdet对应的efficient
         self.backbone_phi = [0, 1, 2, 3, 4, 5, 6, 6]
         # BiFPN所用的通道数
-        self.fpn_num_filters = [256, 88, 112, 160, 224, 288, 384, 384]
+        self.fpn_num_filters = [64, 88, 112, 160, 224, 288, 384, 384]
         # BiFPN的重复次数
         self.fpn_cell_repeats = [3, 4, 5, 6, 7, 7, 8, 8]
         # 分类头的卷积重复次数
@@ -477,11 +477,11 @@ class EfficientDetBackbone(nn.Module):
 
         self.backbone_net = EfficientNet(self.backbone_phi[phi], load_weights)
 
-        self.cls_head = FCOSClsCenterHead(256,
+        self.cls_head = FCOSClsCenterHead(self.fpn_num_filters[self.phi],
                                     self.num_classes,
                                     num_layers=4,
                                     prior=0.01)
-        self.regcenter_head = FCOSRegHead(256, num_layers=4)
+        self.regcenter_head = FCOSRegHead(self.fpn_num_filters[self.phi], num_layers=4)
 
         self.strides = torch.tensor([8, 16, 32, 64, 128], dtype=torch.float)
         self.positions = FCOSPositions(self.strides)
