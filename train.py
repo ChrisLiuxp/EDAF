@@ -125,6 +125,10 @@ def fit_one_epoch(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genval,Epoch
             cls_heads, reg_heads, center_heads, batch_positions = net(images)
             cls_loss, reg_loss, center_ness_loss = fcos_loss(cls_heads, reg_heads, center_heads, batch_positions, targets, cuda=cuda)
             loss = cls_loss + reg_loss + center_ness_loss
+            if cls_loss.item() == 0.0 or reg_loss.item() == 0.0:
+                optimizer.zero_grad()
+                continue
+
             loss.backward()
             optimizer.step()
 
@@ -184,7 +188,7 @@ if __name__ == "__main__":
     #   二者所使用Efficientdet版本要相同
     #-------------------------------------------#
     phi = 0
-    Cuda = False
+    Cuda = True
     annotation_path = '2007_train.txt'
     classes_path = 'model_data/voc_classes.txt'   
     #-------------------------------#
@@ -249,7 +253,7 @@ if __name__ == "__main__":
         lr = 1e-3
         Batch_size = 1
         Init_Epoch = 0
-        Freeze_Epoch = 50
+        Freeze_Epoch = 1
         
         optimizer = optim.Adam(net.parameters(),lr,weight_decay=5e-4)
         lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=2, verbose=True)
@@ -285,8 +289,8 @@ if __name__ == "__main__":
         #--------------------------------------------#
         lr = 1e-4
         Batch_size = 1
-        Freeze_Epoch = 50
-        Unfreeze_Epoch = 100
+        Freeze_Epoch = 1
+        Unfreeze_Epoch = 2
 
         optimizer = optim.Adam(net.parameters(),lr,weight_decay=5e-4)
         lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=2, verbose=True)
