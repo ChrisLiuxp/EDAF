@@ -16,6 +16,7 @@ from nets.efficientdet import EfficientDetBackbone
 from nets.efficientdet_training import Generator, FocalLoss
 from nets.fcos_training import FCOSLoss
 from tqdm import tqdm
+from utils.vocdataset import VOCDataPrefetcher
 
 def get_lr(optimizer):
     for param_group in optimizer.param_groups:
@@ -30,6 +31,75 @@ def get_classes(classes_path):
         class_names = f.readlines()
     class_names = [c.strip() for c in class_names]
     return class_names
+
+def fit_one_epoch_new(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genval,Epoch,cuda):
+    cls_losses, reg_losses, center_ness_losses, losses, val_loss = [], [], [], [], []
+
+    prefetcher = VOCDataPrefetcher(gen)
+    images, annotations = prefetcher.next()
+
+    start_time = time.time()
+    with tqdm(total=epoch_size, desc=f'Epoch {epoch + 1}/{Epoch}', postfix=dict, mininterval=0.3) as pbar:
+        while images is not None:
+            images, annotations = images.cuda().float(), annotations.cuda()
+            cls_heads, reg_heads, center_heads, batch_positions = net(images)
+            cls_loss, reg_loss, center_ness_loss = fcos_loss(
+                cls_heads, reg_heads, center_heads, batch_positions, annotations, cuda=cuda)
+            loss = cls_loss + reg_loss + center_ness_loss
+            if cls_loss == 0.0 or reg_loss == 0.0:
+                optimizer.zero_grad()
+                continue
+
+            loss.backward()
+
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 0.1)
+            optimizer.step()
+            optimizer.zero_grad()
+
+            cls_losses.append(cls_loss.item())
+            reg_losses.append(reg_loss.item())
+            center_ness_losses.append(center_ness_loss.item())
+            losses.append(loss.item())
+
+            images, annotations = prefetcher.next()
+
+            waste_time = time.time() - start_time
+
+            pbar.set_postfix(**{'Conf Loss'         : loss.item(),
+                                'Regression Loss'   : reg_loss.item(),
+                                'Center-ness Loss'  : center_ness_loss.item(),
+                                'lr'                : get_lr(optimizer),
+                                'step/s'            : waste_time})
+            pbar.update(1)
+
+            start_time = time.time()
+
+    print('Start Validation')
+    prefetcher_val = VOCDataPrefetcher(genval)
+    images_val, annotations_val = prefetcher_val.next()
+    with tqdm(total=epoch_size_val, desc=f'Epoch {epoch + 1}/{Epoch}', postfix=dict, mininterval=0.3) as pbar:
+        while images_val is not None:
+            images_val, annotations_val = images_val.cuda().float(), annotations_val.cuda()
+            cls_heads, reg_heads, center_heads, batch_positions = net(images_val)
+            cls_loss, reg_loss, center_ness_loss = fcos_loss(
+                cls_heads, reg_heads, center_heads, batch_positions, annotations_val, cuda=cuda)
+            loss = cls_loss + reg_loss + center_ness_loss
+            val_loss.append(loss.item())
+
+            images_val, annotations_val = prefetcher_val.next()
+
+            pbar.set_postfix(**{'total_loss': loss.item()})
+            pbar.update(1)
+
+    print('Finish Validation')
+    print('\nEpoch:' + str(epoch + 1) + '/' + str(Epoch))
+    print('Total Loss: %.4f || Val Loss: %.4f ' % (losses / (epoch_size + 1), val_loss / (epoch_size_val + 1)))
+
+    print('Saving state, iter:', str(epoch + 1))
+    torch.save(model.state_dict(), 'logs/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth' % (
+    (epoch + 1), losses / (epoch_size + 1), val_loss / (epoch_size_val + 1)))
+    return val_loss / (epoch_size_val + 1)
+
 
 def fit_one_epoch(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genval,Epoch,cuda):
     total_r_loss = 0

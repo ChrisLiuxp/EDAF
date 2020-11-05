@@ -61,6 +61,7 @@ class FCOSLoss(nn.Module):
                 reg_loss.append(one_image_reg_loss)
                 center_ness_loss.append(one_image_center_ness_loss)
 
+        valid_image_num = 1 if valid_image_num == 0 else valid_image_num
         cls_loss = sum(cls_loss) / valid_image_num
         reg_loss = sum(reg_loss) / valid_image_num
         center_ness_loss = sum(center_ness_loss) / valid_image_num
@@ -261,8 +262,9 @@ class FCOSLoss(nn.Module):
         batch_targets = []
         for per_image_position, per_image_mi, per_image_annotations in zip(
                 all_points_position, all_points_mi, annotations):
-            per_image_annotations = per_image_annotations[
-                per_image_annotations[:, 4] >= 0]
+            if per_image_annotations.shape[0] != 0:
+                per_image_annotations = per_image_annotations[
+                    per_image_annotations[:, 4] >= 0]
             points_num = per_image_position.shape[0]
 
             if per_image_annotations.shape[0] == 0:
