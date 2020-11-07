@@ -92,14 +92,19 @@ class FCOSPositions(nn.Module):
         device = fpn_feature_sizes.device
 
         one_sample_positions = []
+        # 遍历每层的步长和特征图大小
         for stride, fpn_feature_size in zip(self.strides, fpn_feature_sizes):
+            # 在单层特征图上，产生特征点坐标
             featrue_positions = self.generate_positions_on_feature_map(
                 fpn_feature_size, stride)
             featrue_positions = featrue_positions.to(device)
             one_sample_positions.append(featrue_positions)
 
         batch_positions = []
+        # 遍历每层特征点坐标
         for per_level_featrue_positions in one_sample_positions:
+            # unsqueeze(0)表示在第一个维度增加一个维度，这个维度是留给batch size的
+            # repeat(batch_size, 1, 1, 1)意思是第一个维度重复batch size遍，其他维度不变（重复一遍）
             per_level_featrue_positions = per_level_featrue_positions.unsqueeze(
                 0).repeat(batch_size, 1, 1, 1)
             batch_positions.append(per_level_featrue_positions)

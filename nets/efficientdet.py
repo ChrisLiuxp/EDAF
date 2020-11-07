@@ -519,6 +519,7 @@ class EfficientDetBackbone(nn.Module):
         self.fpn_feature_sizes = []
         cls_heads, reg_heads, center_heads = [], [], []
         for feature, scale in zip(features, self.scales):
+            # 每层特征图的大小，如64×64
             self.fpn_feature_sizes.append([feature.shape[3], feature.shape[2]])
             cls_outs, center_outs = self.cls_head(feature)
             # [N,num_classes,H,W] -> [N,H,W,num_classes]
