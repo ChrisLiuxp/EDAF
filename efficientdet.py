@@ -71,7 +71,10 @@ class EfficientDet(object):
 
         # 加快模型训练的效率
         print('Loading weights into state dict...')
-        state_dict = torch.load(self.model_path)
+        if self.cuda:
+            state_dict = torch.load(self.model_path)
+        else:
+            state_dict = torch.load(self.model_path, map_location=torch.device('cpu'))
         self.net.load_state_dict(state_dict)
         self.net = nn.DataParallel(self.net)
         if self.cuda:
