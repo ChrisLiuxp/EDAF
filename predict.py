@@ -6,13 +6,23 @@ from PIL import Image
 
 efficientdet = EfficientDet()
 
-while True:
-    img = input('Input image filename:')
-    try:
-        image = Image.open(img)
-    except:
-        print('Open Error! Try again!')
-        continue
-    else:
-        r_image = efficientdet.detect_image(image)
-        r_image.show()
+# while True:
+#     img = input('Input image filename:')
+#     try:
+#         image = Image.open(img)
+#     except:
+#         print('Open Error! Try again!')
+#         continue
+#     else:
+#         r_image = efficientdet.detect_image(image)
+#         r_image.show()
+
+
+try:
+    image = Image.open('img/street.jpg')
+except:
+    print('Open Error! Try again!')
+else:
+    r_image = efficientdet.detect_image_fcos(image)
+    r_image.show()
+

@@ -16,6 +16,7 @@ from efficientdet import EfficientDet
 from nets.efficientdet import EfficientDetBackbone
 from PIL import Image,ImageFont, ImageDraw
 from utils.utils import non_max_suppression, bbox_iou, decodebox, letterbox_image, efficientdet_correct_boxes
+from nets.decode import FCOSDecoder
 
 image_sizes = [512, 640, 768, 896, 1024, 1280, 1280, 1536]
 
@@ -47,10 +48,16 @@ class mAP_EfficientDet(EfficientDet):
             images = torch.from_numpy(images)
             if self.cuda:
                 images = images.cuda()
-            _, regression, classification, anchors = self.net(images)
-            
-            regression = decodebox(regression, anchors, images)
-            detection = torch.cat([regression,classification],axis=-1)
+            # _, regression, classification, anchors = self.net(images)
+            #
+            # regression = decodebox(regression, anchors, images)
+            # detection = torch.cat([regression,classification],axis=-1)
+            cls_heads, reg_heads, center_heads, batch_positions = self.net(images)
+            decode = FCOSDecoder(image_shape[0],image_shape[1])
+            batch_scores, batch_classes, batch_pred_bboxes, batch_pred_cls = decode(
+                cls_heads, reg_heads, center_heads, batch_positions)
+
+            detection = torch.cat([batch_pred_bboxes, batch_pred_cls], axis=-1)
             batch_detections = non_max_suppression(detection, len(self.class_names),
                                                     conf_thres=self.confidence,
                                                     nms_thres=self.iou)
